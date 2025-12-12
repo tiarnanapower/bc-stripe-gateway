@@ -51,6 +51,7 @@ app.post('/payment/charge', (req, res) => {
 });
 app.get('/checkout.js', (req, res) => {
     const publicUrl = process.env.PUBLIC_URL || 'https://bc-stripe-gateway.onrender.com';
+    const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY || 'pk_test_REPLACE_ME';
     const js = `
     console.log('[Custom Stripe] checkout.js loaded');
 
@@ -66,32 +67,69 @@ app.get('/checkout.js', (req, res) => {
       };
       document.head.appendChild(stripeJs);
 
-   function getCheckoutId() {
+      function getOrderTotalFromDom() {
         try {
-          // 1) Try query string: ?checkoutId=...
-          var params = new URLSearchParams(window.location.search);
-          var fromQuery = params.get('checkoutId');
-          if (fromQuery) {
-            console.log('[Custom Stripe] checkoutId from query:', fromQuery);
-            return fromQuery;
+          var candidates = [
+            '[data-test="cart-total-grand-total"]',
+            '.cart-total-grandTotal .cart-total-value',
+            '.cart-total-grandTotal',
+            '.cart-total .cart-total-value'
+          ];
+
+          for (var i = 0; i < candidates.length; i++) {
+            var el = document.querySelector(candidates[i]);
+            if (!el) continue;
+
+            var text = (el.textContent || '').trim();
+            if (!text) continue;
+
+            console.log('[Custom Stripe] grand total text from DOM:', text);
+
+            // Strip currency symbols and commas, keep digits and dot
+            var numeric = text.replace(/[^0-9.,]/g, '').replace(',', '');
+            var value = parseFloat(numeric);
+
+            if (!isNaN(value) && value > 0) {
+              return value; // e.g. 123.45
+            }
           }
 
-          // 2) Try BigCommerce global data objects
-          if (window.BCData && window.BCData.checkout && window.BCData.checkout.id) {
-            console.log('[Custom Stripe] checkoutId from BCData.checkout.id:', window.BCData.checkout.id);
-            return window.BCData.checkout.id;
-          }
-
-          if (window.checkout && window.checkout.id) {
-            console.log('[Custom Stripe] checkoutId from window.checkout.id:', window.checkout.id);
-            return window.checkout.id;
-          }
-
-          console.error('[Custom Stripe] checkoutId not found in URL or BCData');
+          console.error('[Custom Stripe] could not find grand total in DOM');
           return null;
         } catch (e) {
-          console.error('[Custom Stripe] error reading checkoutId', e);
+          console.error('[Custom Stripe] error reading grand total from DOM', e);
           return null;
+        }
+      }
+
+      function getCurrencyFromDom() {
+        try {
+          var candidates = [
+            '[data-test="cart-total-grand-total"]',
+            '.cart-total-grandTotal .cart-total-value',
+            '.cart-total-grandTotal',
+            '.cart-total .cart-total-value'
+          ];
+
+          for (var i = 0; i < candidates.length; i++) {
+            var el = document.querySelector(candidates[i]);
+            if (!el) continue;
+
+            var text = (el.textContent || '').trim();
+            if (!text) continue;
+
+            if (text.indexOf('GBP') !== -1 || text.indexOf('£') !== -1) return 'gbp';
+            if (text.indexOf('EUR') !== -1 || text.indexOf('€') !== -1) return 'eur';
+            if (text.indexOf('USD') !== -1 || text.indexOf('$') !== -1) return 'usd';
+
+            // fallback to your main currency
+            return 'gbp';
+          }
+
+          return 'gbp';
+        } catch (e) {
+          console.error('[Custom Stripe] error reading currency from DOM', e);
+          return 'gbp';
         }
       }
 
@@ -146,7 +184,7 @@ app.get('/checkout.js', (req, res) => {
           var errorDiv = wrapper.querySelector('#custom-stripe-errors');
           var payButton = wrapper.querySelector('#custom-stripe-pay');
 
-          var stripe = Stripe('${process.env.STRIPE_PUBLISHABLE_KEY || 'pk_test_REPLACE_ME'}');
+          var stripe = Stripe('${publishableKey}');
           var elements = stripe.elements();
           var card = elements.create('card');
           card.mount(cardElementDiv);
@@ -164,20 +202,24 @@ app.get('/checkout.js', (req, res) => {
                 payButton.disabled = true;
                 payButton.textContent = 'Processing...';
 
-                // get checkoutId instead of hardcoded amount
-               var checkoutId = getCheckoutId();
-                console.log('[Custom Stripe] using checkoutId:', checkoutId);
-                if (!checkoutId) {
-                  errorDiv.textContent = 'Missing checkout ID – cannot create payment.';
+                var total = getOrderTotalFromDom();
+                var currency = getCurrencyFromDom();
+
+                console.log('[Custom Stripe] using total from DOM:', total, currency);
+
+                if (!total) {
+                  errorDiv.textContent = 'Could not read order total from page.';
                   payButton.disabled = false;
                   payButton.textContent = 'Pay with Custom Stripe';
                   return;
                 }
 
+                var amount = Math.round(total * 100); // e.g. 123.45 -> 12345
+
                 const resp = await fetch('${publicUrl}/payment/create-intent', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ checkoutId: checkoutId }),
+                  body: JSON.stringify({ amount: amount, currency: currency }),
                 });
 
                 const data = await resp.json();
@@ -223,45 +265,23 @@ app.get('/checkout.js', (req, res) => {
 });
 const port = process.env.PORT || 3000;
 app.post('/payment/create-intent', async (req, res) => {
-    var _a, _b, _c, _d;
     try {
-        const { checkoutId } = req.body;
-        if (!checkoutId) {
-            return res.status(400).json({ error: 'checkoutId is required' });
+        const { amount, currency } = req.body;
+        if (!amount || !currency) {
+            return res.status(400).json({ error: 'amount and currency are required' });
         }
-        // 1) Load checkout from BigCommerce
-        const checkout = await getBigCommerceCheckout(checkoutId);
-        // Shape can vary slightly by API version, so we’re defensive:
-        const grandTotal = (checkout === null || checkout === void 0 ? void 0 : checkout.grand_total) ||
-            ((_a = checkout === null || checkout === void 0 ? void 0 : checkout.cart) === null || _a === void 0 ? void 0 : _a.grand_total) ||
-            (checkout === null || checkout === void 0 ? void 0 : checkout.outstandingBalance);
-        const currencyCode = ((_b = checkout === null || checkout === void 0 ? void 0 : checkout.currency) === null || _b === void 0 ? void 0 : _b.code) ||
-            ((_d = (_c = checkout === null || checkout === void 0 ? void 0 : checkout.cart) === null || _c === void 0 ? void 0 : _c.currency) === null || _d === void 0 ? void 0 : _d.code) ||
-            'GBP';
-        if (!grandTotal || !currencyCode) {
-            console.error('[Custom Stripe] Missing totals from BC checkout', checkout);
-            return res.status(400).json({ error: 'Could not determine checkout total' });
-        }
-        // BigCommerce usually returns something like 10.00; Stripe wants integer minor units
-        const amount = Math.round(Number(grandTotal) * 100);
-        console.log(`[Custom Stripe] Creating PaymentIntent for checkout ${checkoutId}:`, amount, currencyCode);
-        // 2) Create Stripe PaymentIntent with correct amount & currency
+        console.log('[Custom Stripe] creating PaymentIntent:', amount, currency);
         const paymentIntent = await stripe.paymentIntents.create({
-            amount,
-            currency: currencyCode.toLowerCase(), // e.g. 'gbp'
+            amount, // integer minor units
+            currency, // e.g. 'gbp'
             automatic_payment_methods: { enabled: true },
             setup_future_usage: 'off_session',
-            metadata: {
-                bc_checkout_id: checkoutId,
-            },
         });
         res.json({ clientSecret: paymentIntent.client_secret });
     }
     catch (error) {
         console.error('[Custom Stripe] create-intent error:', error);
-        res
-            .status(500)
-            .json({ error: error.message || 'Something went wrong creating PaymentIntent' });
+        res.status(500).json({ error: error.message || 'Something went wrong' });
     }
 });
 app.listen(port, () => {
