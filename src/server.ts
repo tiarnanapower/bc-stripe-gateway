@@ -77,12 +77,31 @@ app.post('/payment/charge', (req: Request, res: Response) => {
       };
       document.head.appendChild(stripeJs);
 
-      function getCheckoutId() {
+   function getCheckoutId() {
         try {
+          // 1) Try query string: ?checkoutId=...
           var params = new URLSearchParams(window.location.search);
-          return params.get('checkoutId');
+          var fromQuery = params.get('checkoutId');
+          if (fromQuery) {
+            console.log('[Custom Stripe] checkoutId from query:', fromQuery);
+            return fromQuery;
+          }
+
+          // 2) Try BigCommerce global data objects
+          if (window.BCData && window.BCData.checkout && window.BCData.checkout.id) {
+            console.log('[Custom Stripe] checkoutId from BCData.checkout.id:', window.BCData.checkout.id);
+            return window.BCData.checkout.id;
+          }
+
+          if (window.checkout && window.checkout.id) {
+            console.log('[Custom Stripe] checkoutId from window.checkout.id:', window.checkout.id);
+            return window.checkout.id;
+          }
+
+          console.error('[Custom Stripe] checkoutId not found in URL or BCData');
+          return null;
         } catch (e) {
-          console.error('[Custom Stripe] could not read checkoutId from URL', e);
+          console.error('[Custom Stripe] error reading checkoutId', e);
           return null;
         }
       }
@@ -157,9 +176,10 @@ app.post('/payment/charge', (req: Request, res: Response) => {
                 payButton.textContent = 'Processing...';
 
                 // get checkoutId instead of hardcoded amount
-                var checkoutId = getCheckoutId();
+               var checkoutId = getCheckoutId();
+                console.log('[Custom Stripe] using checkoutId:', checkoutId);
                 if (!checkoutId) {
-                  errorDiv.textContent = 'Missing checkout ID cannot create payment.';
+                  errorDiv.textContent = 'Missing checkout ID – cannot create payment.';
                   payButton.disabled = false;
                   payButton.textContent = 'Pay with Custom Stripe';
                   return;
