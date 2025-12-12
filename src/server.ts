@@ -64,7 +64,8 @@ app.get('/checkout.js', (req: Request, res: Response) => {
             }, 500);
           }
 
-          console.log('[Custom Stripe] injecting payment method');
+         console.log('[Custom Stripe] injecting payment method into:', paymentContainer.tagName, paymentContainer.className);
+
 
           var wrapper = document.createElement('div');
           wrapper.className = 'form-checklist-item custom-stripe-method';
@@ -99,7 +100,9 @@ app.get('/checkout.js', (req: Request, res: Response) => {
           var cardElementDiv = wrapper.querySelector('#custom-stripe-card-element');
           var errorDiv = wrapper.querySelector('#custom-stripe-errors');
 
-          var stripe = Stripe('${process.env.STRIPE_PUBLISHABLE_KEY || 'pk_test_replace_me'}');
+          var stripe = Stripe('${process.env.STRIPE_PUBLISHABLE_KEY }');
+          console.log(stripe);
+        console.log('[Custom Stripe] api key');
           var elements = stripe.elements();
           var card = elements.create('card');
           card.mount(cardElementDiv);
