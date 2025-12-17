@@ -41,7 +41,6 @@ app.get('/checkout.js', (req: Request, res: Response) => {
     document.addEventListener('DOMContentLoaded', function () {
       console.log('[Custom Stripe] DOM ready');
 
-      // Load Stripe.js (v3)
       var stripeScript = document.createElement('script');
       stripeScript.src = 'https://js.stripe.com/clover/stripe.js';
       stripeScript.onload = function () {
@@ -84,7 +83,7 @@ app.get('/checkout.js', (req: Request, res: Response) => {
           elements = stripe.elements({
             clientSecret: paymentClientSecret,
             appearance: { theme: 'stripe' },
-            loader: 'auto'
+            loader: 'auto',
           });
 
           paymentElement = elements.create('payment');
@@ -92,12 +91,14 @@ app.get('/checkout.js', (req: Request, res: Response) => {
         }
 
         function injectCustomPaymentMethod(attempts) {
-          if (attempts <= 0) return;
+          if (attempts <= 0) {
+            console.log('[Custom Stripe] giving up injecting payment method');
+            return;
+          }
 
-          var paymentContainer =
-            document.querySelector('.checkout-step--payment .form-checklist') ||
-            document.querySelector('[data-test="payment-methods"]') ||
-            document.body;
+          var paymentContainer = document.querySelector(
+            'form[data-test="payment-form"] ul.form-checklist.optimizedCheckout-form-checklist'
+          );
 
           if (!paymentContainer) {
             console.log('[Custom Stripe] payment container not found, retrying...');
@@ -106,30 +107,60 @@ app.get('/checkout.js', (req: Request, res: Response) => {
             }, 500);
           }
 
-          console.log('[Custom Stripe] injecting payment method into:', paymentContainer.tagName, paymentContainer.className);
+          console.log(
+            '[Custom Stripe] injecting payment method into:',
+            paymentContainer.tagName,
+            paymentContainer.className
+          );
 
           var wrapper = document.createElement('li');
-          wrapper.className = 'form-checklist-item custom-stripe-method';
+          wrapper.className =
+            'form-checklist-item optimizedCheckout-form-checklist-item form-checklist-item--selected optimizedCheckout-form-checklist-item--selected';
+
           wrapper.innerHTML = \`
-            <div class="form-checklist">
+            <div class="form-checklist-header form-checklist-header--selected">
               <div class="form-field">
                 <input
+                  id="radio-custom-stripe"
                   type="radio"
-                  id="custom-stripe"
-                  name="paymentProvider"
-                  class="form-radio"
+                  class="form-checklist-checkbox optimizedCheckout-form-checklist-checkbox"
+                  name="paymentProviderRadio"
+                  value="custom-stripe"
+                  checked
                 />
-                <label class="form-label" for="custom-stripe">
-                  Pay with Custom Stripe
+                <label
+                  for="radio-custom-stripe"
+                  class="form-label optimizedCheckout-form-label"
+                >
+                  <div class="paymentProviderHeader-container">
+                    <div
+                      class="paymentProviderHeader-nameContainer"
+                      data-test="payment-method-custom-stripe"
+                    >
+                      <div
+                        class="paymentProviderHeader-name"
+                        data-test="payment-method-name"
+                      >
+                        Pay with Custom Stripe
+                      </div>
+                    </div>
+                    <div class="paymentProviderHeader-cc"></div>
+                  </div>
                 </label>
               </div>
-              <div id="custom-stripe-fields" class="payment-method" style="display:none;">
-                <div id="custom-stripe-payment-element" class="optimizedCheckout-form-input"></div>
+            </div>
+            <div aria-live="polite" class="form-checklist-body">
+              <div id="custom-stripe-fields" class="payment-method">
+                <div
+                  id="custom-stripe-payment-element"
+                  class="optimizedCheckout-form-input"
+                ></div>
                 <div id="custom-stripe-errors" class="form-field--error"></div>
                 <button
                   type="button"
                   id="custom-stripe-pay"
                   class="button button--primary optimizedCheckout-buttonPrimary"
+                  style="margin-top: 1rem;"
                 >
                   Pay with Custom Stripe
                 </button>
@@ -143,10 +174,27 @@ app.get('/checkout.js', (req: Request, res: Response) => {
             paymentContainer.appendChild(wrapper);
           }
 
-          var radio = wrapper.querySelector('#custom-stripe');
+          var radio = wrapper.querySelector('#radio-custom-stripe');
           var fields = wrapper.querySelector('#custom-stripe-fields');
           var errorDiv = wrapper.querySelector('#custom-stripe-errors');
           var payButton = wrapper.querySelector('#custom-stripe-pay');
+
+
+          if (fields) {
+            fields.style.display = 'block';
+          }
+
+          // init Payment Element immediately so the card form appears
+          (async function () {
+            try {
+              await initPaymentElement();
+            } catch (e) {
+              console.error('[Custom Stripe] Error initialising Payment Element:', e);
+              if (errorDiv) {
+                errorDiv.textContent = e.message || 'Error initialising payment form';
+              }
+            }
+          })();
 
           if (radio && fields && payButton) {
             radio.addEventListener('change', async function () {
@@ -209,7 +257,6 @@ app.get('/checkout.js', (req: Request, res: Response) => {
   res.type('application/javascript').send(js);
 });
 
-
 const port = process.env.PORT || 3000;
 
 app.post('/payment/create-intent', async (req: Request, res: Response) => {
@@ -238,3 +285,4 @@ app.post('/payment/create-intent', async (req: Request, res: Response) => {
 app.listen(port, () => {
   console.log(`Custom payment app listening on port ${port}`);
 });
+
