@@ -36,7 +36,6 @@ app.get('/checkout.js', (req, res) => {
     document.addEventListener('DOMContentLoaded', function () {
       console.log('[Custom Stripe] DOM ready');
 
-      // Load Stripe.js (v3)
       var stripeScript = document.createElement('script');
       stripeScript.src = 'https://js.stripe.com/clover/stripe.js';
       stripeScript.onload = function () {
@@ -90,9 +89,7 @@ app.get('/checkout.js', (req, res) => {
           if (attempts <= 0) return;
 
           var paymentContainer =
-            document.querySelector('.checkout-step--payment .form-checklist') ||
-            document.querySelector('[data-test="payment-methods"]') ||
-            document.body;
+            document.querySelector('ul.form-checklist.optimizedCheckout-form-checklist');
 
           if (!paymentContainer) {
             console.log('[Custom Stripe] payment container not found, retrying...');
@@ -139,6 +136,9 @@ app.get('/checkout.js', (req, res) => {
           }
 
           var radio = wrapper.querySelector('#custom-stripe');
+          if (radio) {
+              radio.checked = true;
+            }
           var fields = wrapper.querySelector('#custom-stripe-fields');
           var errorDiv = wrapper.querySelector('#custom-stripe-errors');
           var payButton = wrapper.querySelector('#custom-stripe-pay');
