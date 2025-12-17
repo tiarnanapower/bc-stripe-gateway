@@ -41,7 +41,7 @@ app.get('/checkout.js', (req: Request, res: Response) => {
     document.addEventListener('DOMContentLoaded', function () {
       console.log('[Custom Stripe] DOM ready');
 
-      // Load Stripe.js
+      // Load Stripe.js (v3)
       var stripeScript = document.createElement('script');
       stripeScript.src = 'https://js.stripe.com/clover/stripe.js';
       stripeScript.onload = function () {
@@ -51,12 +51,52 @@ app.get('/checkout.js', (req: Request, res: Response) => {
       document.head.appendChild(stripeScript);
 
       function setupCustomStripe() {
+        var stripe = Stripe('${publishableKey}');
+        var elements = null;
+        var paymentElement = null;
+        var paymentClientSecret = null;
+
+        async function initPaymentElement() {
+          if (elements && paymentElement && paymentClientSecret) {
+            return;
+          }
+
+          // TODO: later replace with real BC total & currency
+          var amount = 1000; // £10.00 test
+          var currency = 'gbp';
+
+          console.log('[Custom Stripe] creating PaymentIntent for', amount, currency);
+
+          const resp = await fetch('${publicUrl}/payment/create-intent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount: amount, currency: currency }),
+          });
+
+          const data = await resp.json();
+
+          if (!resp.ok) {
+            throw new Error(data.error || 'Failed to create PaymentIntent');
+          }
+
+          paymentClientSecret = data.clientSecret;
+
+          elements = stripe.elements({
+            clientSecret: paymentClientSecret,
+            appearance: { theme: 'stripe' },
+            loader: 'auto'
+          });
+
+          paymentElement = elements.create('payment');
+          paymentElement.mount('#custom-stripe-payment-element');
+        }
+
         function injectCustomPaymentMethod(attempts) {
           if (attempts <= 0) return;
 
           var paymentContainer =
+            document.querySelector('.checkout-step--payment .form-checklist') ||
             document.querySelector('[data-test="payment-methods"]') ||
-            document.querySelector('.checkout-step--payment') ||
             document.body;
 
           if (!paymentContainer) {
@@ -68,7 +108,7 @@ app.get('/checkout.js', (req: Request, res: Response) => {
 
           console.log('[Custom Stripe] injecting payment method into:', paymentContainer.tagName, paymentContainer.className);
 
-          var wrapper = document.createElement('div');
+          var wrapper = document.createElement('li');
           wrapper.className = 'form-checklist-item custom-stripe-method';
           wrapper.innerHTML = \`
             <div class="form-checklist">
@@ -83,33 +123,42 @@ app.get('/checkout.js', (req: Request, res: Response) => {
                   Pay with Custom Stripe
                 </label>
               </div>
-              <div id="custom-stripe-fields" style="display:none; margin-left: 2rem;">
-                <div id="custom-stripe-card-element" style="max-width: 400px; padding: 8px; border: 1px solid #ccc; border-radius: 4px;"></div>
-                <div id="custom-stripe-errors" style="color:#c00; margin-top:8px;"></div>
-                <button type="button" id="custom-stripe-pay" class="button button--primary" style="margin-top:12px;">
+              <div id="custom-stripe-fields" class="payment-method" style="display:none;">
+                <div id="custom-stripe-payment-element" class="optimizedCheckout-form-input"></div>
+                <div id="custom-stripe-errors" class="form-field--error"></div>
+                <button
+                  type="button"
+                  id="custom-stripe-pay"
+                  class="button button--primary optimizedCheckout-buttonPrimary"
+                >
                   Pay with Custom Stripe
                 </button>
               </div>
             </div>
           \`;
 
-          paymentContainer.appendChild(wrapper);
+          if (paymentContainer.firstChild) {
+            paymentContainer.insertBefore(wrapper, paymentContainer.firstChild);
+          } else {
+            paymentContainer.appendChild(wrapper);
+          }
 
           var radio = wrapper.querySelector('#custom-stripe');
           var fields = wrapper.querySelector('#custom-stripe-fields');
-          var cardElementDiv = wrapper.querySelector('#custom-stripe-card-element');
           var errorDiv = wrapper.querySelector('#custom-stripe-errors');
           var payButton = wrapper.querySelector('#custom-stripe-pay');
 
-          var stripe = Stripe('${publishableKey}');
-          var elements = stripe.elements();
-          var card = elements.create('card');
-          card.mount(cardElementDiv);
-
           if (radio && fields && payButton) {
-            radio.addEventListener('change', function () {
+            radio.addEventListener('change', async function () {
               console.log('[Custom Stripe] selected');
               fields.style.display = 'block';
+
+              try {
+                await initPaymentElement();
+              } catch (e) {
+                console.error('[Custom Stripe] Error initialising Payment Element:', e);
+                errorDiv.textContent = e.message || 'Error initialising payment form';
+              }
             });
 
             payButton.addEventListener('click', async function () {
@@ -119,37 +168,25 @@ app.get('/checkout.js', (req: Request, res: Response) => {
                 payButton.disabled = true;
                 payButton.textContent = 'Processing...';
 
-                // TEMP: hardcoded for test
-                var amount = 1000; // £10.00
-                var currency = 'gbp';
-
-                const resp = await fetch('${publicUrl}/payment/create-intent', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ amount, currency }),
-                });
-
-                const data = await resp.json();
-
-                if (!resp.ok) {
-                  throw new Error(data.error || 'Failed to create PaymentIntent');
+                if (!elements || !paymentElement || !paymentClientSecret) {
+                  await initPaymentElement();
                 }
 
-                const clientSecret = data.clientSecret;
-
-                const result = await stripe.confirmCardPayment(clientSecret, {
-                  payment_method: { card: card },
+                const { error } = await stripe.confirmPayment({
+                  elements: elements,
+                  clientSecret: paymentClientSecret,
+                  redirect: 'if_required',
                 });
 
-                if (result.error) {
-                  console.error('[Custom Stripe] Payment error:', result.error);
-                  errorDiv.textContent = result.error.message || 'Payment failed';
+                if (error) {
+                  console.error('[Custom Stripe] Payment error:', error);
+                  errorDiv.textContent = error.message || 'Payment failed';
                   payButton.disabled = false;
                   payButton.textContent = 'Pay with Custom Stripe';
                   return;
                 }
 
-                console.log('[Custom Stripe] Payment success:', result.paymentIntent.status);
+                console.log('[Custom Stripe] Payment success');
                 errorDiv.style.color = 'green';
                 errorDiv.textContent = 'Payment succeeded (demo).';
                 payButton.disabled = false;
@@ -171,6 +208,7 @@ app.get('/checkout.js', (req: Request, res: Response) => {
 
   res.type('application/javascript').send(js);
 });
+
 
 const port = process.env.PORT || 3000;
 
