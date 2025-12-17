@@ -220,6 +220,16 @@ app.get('/checkout.js', (req: Request, res: Response) => {
                   await initPaymentElement();
                 }
 
+                // REQUIRED for clover Payment Element submit before confirmPayment
+                const { error: submitError } = await elements.submit();
+                if (submitError) {
+                  console.error('[Custom Stripe] submit error:', submitError);
+                  errorDiv.textContent = submitError.message || 'Payment failed';
+                  payButton.disabled = false;
+                  payButton.textContent = 'Pay with Custom Stripe';
+                  return;
+                }
+
                 const { error } = await stripe.confirmPayment({
                   elements: elements,
                   clientSecret: paymentClientSecret,
