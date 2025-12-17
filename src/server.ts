@@ -41,6 +41,7 @@ app.get('/checkout.js', (req: Request, res: Response) => {
     document.addEventListener('DOMContentLoaded', function () {
       console.log('[Custom Stripe] DOM ready');
 
+      // Load Stripe.js (v3)
       var stripeScript = document.createElement('script');
       stripeScript.src = 'https://js.stripe.com/clover/stripe.js';
       stripeScript.onload = function () {
@@ -95,7 +96,8 @@ app.get('/checkout.js', (req: Request, res: Response) => {
 
           var paymentContainer =
             document.querySelector('.checkout-step--payment .form-checklist') ||
-            document.querySelector('[data-test="payment-methods"]');
+            document.querySelector('[data-test="payment-methods"]') ||
+            document.body;
 
           if (!paymentContainer) {
             console.log('[Custom Stripe] payment container not found, retrying...');
@@ -107,56 +109,32 @@ app.get('/checkout.js', (req: Request, res: Response) => {
           console.log('[Custom Stripe] injecting payment method into:', paymentContainer.tagName, paymentContainer.className);
 
           var wrapper = document.createElement('li');
-          wrapper.className =   'form-checklist-item optimizedCheckout-form-checklist-item form-checklist-item--selected optimizedCheckout-form-checklist-item--selected';
+          wrapper.className = 'form-checklist-item custom-stripe-method';
           wrapper.innerHTML = \`
-          <div class="form-checklist-header form-checklist-header--selected">
-            <div class="form-field">
-              <input
-                id="radio-custom-stripe"
-                type="radio"
-                class="form-checklist-checkbox optimizedCheckout-form-checklist-checkbox"
-                name="paymentProviderRadio"
-                value="custom-stripe"
-                checked
-              />
-              <label
-                for="radio-custom-stripe"
-                class="form-label optimizedCheckout-form-label"
-              >
-                <div class="paymentProviderHeader-container">
-                  <div
-                    class="paymentProviderHeader-nameContainer"
-                    data-test="payment-method-custom-stripe"
-                  >
-                    <div
-                      class="paymentProviderHeader-name"
-                      data-test="payment-method-name"
-                    >
-                      Pay with Custom Stripe
-                    </div>
-                  </div>
-                  <div class="paymentProviderHeader-cc"></div>
-                </div>
-              </label>
+            <div class="form-checklist">
+              <div class="form-field">
+                <input
+                  type="radio"
+                  id="custom-stripe"
+                  name="paymentProvider"
+                  class="form-radio"
+                />
+                <label class="form-label" for="custom-stripe">
+                  Pay with Custom Stripe
+                </label>
+              </div>
+              <div id="custom-stripe-fields" class="payment-method" style="display:none;">
+                <div id="custom-stripe-payment-element" class="optimizedCheckout-form-input"></div>
+                <div id="custom-stripe-errors" class="form-field--error"></div>
+                <button
+                  type="button"
+                  id="custom-stripe-pay"
+                  class="button button--primary optimizedCheckout-buttonPrimary"
+                >
+                  Pay with Custom Stripe
+                </button>
+              </div>
             </div>
-          </div>
-          <div aria-live="polite" class="form-checklist-body">
-            <div id="custom-stripe-fields" class="payment-method">
-              <div
-                id="custom-stripe-payment-element"
-                class="optimizedCheckout-form-input"
-              ></div>
-              <div id="custom-stripe-errors" class="form-field--error"></div>
-              <button
-                type="button"
-                id="custom-stripe-pay"
-                class="button button--primary optimizedCheckout-buttonPrimary"
-                style="margin-top: 1rem;"
-              >
-                Pay with Custom Stripe
-              </button>
-            </div>
-          </div>
           \`;
 
           if (paymentContainer.firstChild) {
@@ -260,4 +238,3 @@ app.post('/payment/create-intent', async (req: Request, res: Response) => {
 app.listen(port, () => {
   console.log(`Custom payment app listening on port ${port}`);
 });
-
