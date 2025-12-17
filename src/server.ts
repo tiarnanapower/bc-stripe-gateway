@@ -94,7 +94,8 @@ app.get('/checkout.js', (req: Request, res: Response) => {
           if (attempts <= 0) return;
 
           var paymentContainer =
-            document.querySelector('ul.form-checklist.optimizedCheckout-form-checklist');
+            document.querySelector('.checkout-step--payment .form-checklist') ||
+            document.querySelector('[data-test="payment-methods"]');
 
           if (!paymentContainer) {
             console.log('[Custom Stripe] payment container not found, retrying...');
