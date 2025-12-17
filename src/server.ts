@@ -41,7 +41,7 @@ app.get('/checkout.js', (req: Request, res: Response) => {
     document.addEventListener('DOMContentLoaded', function () {
       console.log('[Custom Stripe] DOM ready');
 
-      // Load Stripe.js
+
       var stripeScript = document.createElement('script');
       stripeScript.src = 'https://js.stripe.com/v3/';
       stripeScript.onload = function () {
