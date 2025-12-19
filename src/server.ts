@@ -318,8 +318,8 @@ app.post("/payment/create-intent", async (req: Request, res: Response) => {
     }
 
     // 1) Create an incomplete order from the checkout
-    const orderResp = await fetch(
-      `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts/${checkoutId}/orders`,
+    const checkoutResp = await fetch(
+      `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts`,
       {
         method: "POST",
         headers: {
@@ -327,14 +327,15 @@ app.post("/payment/create-intent", async (req: Request, res: Response) => {
           Accept: "application/json",
           "Content-Type": "application/json",
         },
+        body: JSON.stringify({ cartId: checkoutId }), 
       }
     );
 
-    if (!orderResp.ok) {
-      const text = await orderResp.text();
+    if (!checkoutResp.ok) {
+      const text = await checkoutResp.text();
       console.error(
         "[Custom Stripe] create order failed",
-        orderResp.status,
+        checkoutResp.status,
         text
       );
       return res
@@ -342,7 +343,7 @@ app.post("/payment/create-intent", async (req: Request, res: Response) => {
         .json({ error: "Failed to create order from checkout in BigCommerce" });
     }
 
-    const orderJson = await orderResp.json();
+    const orderJson = await checkoutResp.json();
     const order = orderJson.data;
     console.log("[Custom Stripe] Created order from checkout:", order);
     const currency = (

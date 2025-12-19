@@ -309,22 +309,23 @@ app.post("/payment/create-intent", async (req, res) => {
                 .json({ error: "BigCommerce API is not configured on the server" });
         }
         // 1) Create an incomplete order from the checkout
-        const orderResp = await fetch(`https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts/${checkoutId}/orders`, {
+        const checkoutResp = await fetch(`https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts`, {
             method: "POST",
             headers: {
                 "X-Auth-Token": process.env.BC_STOREFRONT_API_TOKEN,
                 Accept: "application/json",
                 "Content-Type": "application/json",
             },
+            body: JSON.stringify({ cartId: checkoutId }),
         });
-        if (!orderResp.ok) {
-            const text = await orderResp.text();
-            console.error("[Custom Stripe] create order failed", orderResp.status, text);
+        if (!checkoutResp.ok) {
+            const text = await checkoutResp.text();
+            console.error("[Custom Stripe] create order failed", checkoutResp.status, text);
             return res
                 .status(500)
                 .json({ error: "Failed to create order from checkout in BigCommerce" });
         }
-        const orderJson = await orderResp.json();
+        const orderJson = await checkoutResp.json();
         const order = orderJson.data;
         console.log("[Custom Stripe] Created order from checkout:", order);
         const currency = (order.currency.code ||
