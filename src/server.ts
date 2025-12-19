@@ -56,26 +56,31 @@ app.get("/checkout.js", (req: Request, res: Response) => {
 
         async function getCheckoutId() {
           try {
-            const res = await fetch('/api/storefront/checkouts', {
+            const res = await fetch('/api/storefront/cart', {
               credentials: 'include',
             });
 
             if (!res.ok) {
-              console.error('[Custom Stripe] /api/storefront/checkouts failed', res.status);
+              console.error('[Custom Stripe] /api/storefront/cart failed', res.status);
               return null;
             }
 
-            const checkouts = await res.json();
-            if (!Array.isArray(checkouts) || !checkouts.length) {
-              console.warn('[Custom Stripe] no checkouts found');
+            const cart = await res.json();
+            if (!Array.isArray(cart) || !cart.length) {
+              console.warn('[Custom Stripe] no cart found');
               return null;
             }
 
-            const checkout = checkouts[0];
-            console.log('[Custom Stripe] checkout id from storefront:', checkout.id);
-            return checkout.id;
+            const cart = cart[0];
+            const id = cart.id || cart.cartId || cart.cart_id;
+            if (!id) {
+              console.warn('[Custom Stripe] cart has no id/cartId/cart_id field');
+              return null;
+            }
+            console.log('[Custom Stripe] cart id from storefront:', id);
+            return id;
           } catch (e) {
-            console.error('[Custom Stripe] error getting checkout id', e);
+            console.error('[Custom Stripe] error getting cart id', e);
             return null;
           }
         }
