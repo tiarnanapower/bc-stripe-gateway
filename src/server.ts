@@ -65,13 +65,15 @@ app.get("/checkout.js", (req: Request, res: Response) => {
               return null;
             }
 
-            const cart = await res.json();
-            if (!Array.isArray(cart) || !cart.length) {
-              console.warn('[Custom Stripe] no cart found');
+            const data = await res.json();
+            console.log('[Custom Stripe] storefront cart response', data);
+            const carts = Array.isArray(data) ? data : data.data;
+            if (!Array.isArray(carts) || !carts.length) {
+              console.warn('[Custom Stripe] no carts found in storefront response');
               return null;
             }
 
-            const cart = cart[0];
+            const cart = carts[0];
             const id = cart.id || cart.cartId || cart.cart_id;
             if (!id) {
               console.warn('[Custom Stripe] cart has no id/cartId/cart_id field');
@@ -299,74 +301,81 @@ app.get("/checkout.js", (req: Request, res: Response) => {
 });
 
 const port = process.env.PORT || 3000;
-app.post('/payment/create-intent', async (req: Request, res: Response) => {
+app.post("/payment/create-intent", async (req: Request, res: Response) => {
   try {
     const { checkoutId } = req.body;
     if (!checkoutId) {
-      return res.status(400).json({ error: 'checkoutId is required' });
+      return res.status(400).json({ error: "checkoutId is required" });
     }
 
     if (!process.env.BC_STORE_HASH || !process.env.BC_STOREFRONT_API_TOKEN) {
-      console.error('[Custom Stripe] Missing BC_STORE_HASH or BC_STOREFRONT_API_TOKEN');
+      console.error(
+        "[Custom Stripe] Missing BC_STORE_HASH or BC_STOREFRONT_API_TOKEN"
+      );
       return res
         .status(500)
-        .json({ error: 'BigCommerce API is not configured on the server' });
+        .json({ error: "BigCommerce API is not configured on the server" });
     }
 
     // 1) Create an incomplete order from the checkout
     const orderResp = await fetch(
       `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts/${checkoutId}/orders`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'X-Auth-Token': process.env.BC_STOREFRONT_API_TOKEN,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
+          "X-Auth-Token": process.env.BC_STOREFRONT_API_TOKEN,
+          Accept: "application/json",
+          "Content-Type": "application/json",
         },
-      },
+      }
     );
 
     if (!orderResp.ok) {
       const text = await orderResp.text();
-      console.error('[Custom Stripe] create order failed', orderResp.status, text);
+      console.error(
+        "[Custom Stripe] create order failed",
+        orderResp.status,
+        text
+      );
       return res
         .status(500)
-        .json({ error: 'Failed to create order from checkout in BigCommerce' });
+        .json({ error: "Failed to create order from checkout in BigCommerce" });
     }
 
     const orderJson = await orderResp.json();
     const order = orderJson.data;
-    console.log('[Custom Stripe] Created order from checkout:', order);
-    const currency = (order.currency.code || order.currency || 'GBP').toLowerCase();
+    console.log("[Custom Stripe] Created order from checkout:", order);
+    const currency = (
+      order.currency.code ||
+      order.currency ||
+      "GBP"
+    ).toLowerCase();
 
-
-    const amountDecimal =
-        order.total_inc_tax ??
-        order.total_ex_tax 
+    const amountDecimal = order.total_inc_tax ?? order.total_ex_tax;
 
     if (amountDecimal == null) {
-      console.error('[Custom Stripe] No amount in order data:', order);
+      console.error("[Custom Stripe] No amount in order data:", order);
       return res
         .status(500)
-        .json({ error: 'Could not determine order total from BigCommerce' });
+        .json({ error: "Could not determine order total from BigCommerce" });
     }
 
     const amount = Math.round(Number(amountDecimal) * 100);
 
     console.log(
-      '[Custom Stripe] Creating PaymentIntent for order',
+      "[Custom Stripe] Creating PaymentIntent for order",
       order.id,
-      'amount =',
+      "amount =",
       amount,
-      'currency =',
-      currency,
+      "currency =",
+      currency
     );
 
     const paymentIntent = await stripe.paymentIntents.create({
       amount,
       currency,
       automatic_payment_methods: { enabled: true },
-      setup_future_usage: 'off_session',
+      setup_future_usage: "off_session",
       metadata: {
         bc_order_id: String(order.id),
         bc_checkout_id: String(checkoutId),
@@ -375,8 +384,8 @@ app.post('/payment/create-intent', async (req: Request, res: Response) => {
 
     res.json({ clientSecret: paymentIntent.client_secret });
   } catch (error: any) {
-    console.error('[Custom Stripe] create-intent error:', error);
-    res.status(500).json({ error: error.message || 'Something went wrong' });
+    console.error("[Custom Stripe] create-intent error:", error);
+    res.status(500).json({ error: error.message || "Something went wrong" });
   }
 });
 
