@@ -308,15 +308,14 @@ app.post("/payment/create-intent", async (req, res) => {
                 .status(500)
                 .json({ error: "BigCommerce API is not configured on the server" });
         }
-        // 1) Create an incomplete order from the checkout
-        const checkoutResp = await fetch(`https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts`, {
+        // 1) Get the incomplete order from the checkout api
+        const checkoutResp = await fetch(`https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts/${checkoutId}`, {
             method: "POST",
             headers: {
                 "X-Auth-Token": process.env.BC_STOREFRONT_API_TOKEN,
                 Accept: "application/json",
                 "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ cartId: checkoutId }),
+            }
         });
         if (!checkoutResp.ok) {
             const text = await checkoutResp.text();
@@ -328,10 +327,10 @@ app.post("/payment/create-intent", async (req, res) => {
         const orderJson = await checkoutResp.json();
         const order = orderJson.data;
         console.log("[Custom Stripe] Created order from checkout:", order);
-        const currency = (order.currency.code ||
-            order.currency ||
+        const currency = (order.cart.currency.code ||
+            order.cart.currency ||
             "GBP").toLowerCase();
-        const amountDecimal = (_a = order.total_inc_tax) !== null && _a !== void 0 ? _a : order.total_ex_tax;
+        const amountDecimal = (_a = order.grand_total) !== null && _a !== void 0 ? _a : order.subtotal_inc_tax;
         if (amountDecimal == null) {
             console.error("[Custom Stripe] No amount in order data:", order);
             return res
