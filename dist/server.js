@@ -10,8 +10,22 @@ const stripe_1 = __importDefault(require("stripe"));
 const stripe = new stripe_1.default(process.env.STRIPE_SECRET_KEY || "", {
     apiVersion: "2025-11-17.clover",
 });
+const allowedOrigins = [
+    "https://france-1742885.mybigcommerce.com",
+];
 const app = (0, express_1.default)();
-app.use((0, cors_1.default)());
+app.use((0, cors_1.default)({
+    origin(origin, callback) {
+        if (!origin)
+            return callback(null, true);
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        console.warn("[Custom Stripe] Blocked CORS origin:", origin);
+        return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+}));
 app.use(body_parser_1.default.json());
 app.get("/health", (req, res) => {
     res.json({ status: "ok" });

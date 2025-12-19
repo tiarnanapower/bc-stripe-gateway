@@ -7,9 +7,25 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
   apiVersion: "2025-11-17.clover",
 });
 
+const allowedOrigins = [
+  "https://france-1742885.mybigcommerce.com",
+];
+
 const app = express();
 
-app.use(cors());
+app.use( cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.warn("[Custom Stripe] Blocked CORS origin:", origin);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  }));
 app.use(bodyParser.json());
 
 app.get("/health", (req: Request, res: Response) => {
