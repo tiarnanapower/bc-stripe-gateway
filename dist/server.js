@@ -323,10 +323,13 @@ app.post("/payment/create-intent", async (req, res) => {
             throw new Error('Failed to create order from checkout in BigCommerce');
         }
         const orderJson = await orderResp.json();
+        console.log(orderJson);
         const order = orderJson.data;
         // e.g.
         const amountDecimal = (_b = (_a = order.total_inc_tax) !== null && _a !== void 0 ? _a : order.total_ex_tax) !== null && _b !== void 0 ? _b : order.order_amount;
-        const currency = order.currency_code.toLowerCase();
+        console.log(order);
+        console.log(amountDecimal);
+        const currency = order.currency.code.toLowerCase();
         const amount = Math.round(Number(amountDecimal) * 100);
         console.log("[Custom Stripe] Creating PaymentIntent for order", order.id, "amount =", amount, "currency =", currency);
         const paymentIntent = await stripe.paymentIntents.create({

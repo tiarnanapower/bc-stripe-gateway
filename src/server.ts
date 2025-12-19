@@ -337,11 +337,14 @@ app.post("/payment/create-intent", async (req: Request, res: Response) => {
       }
 
       const orderJson = await orderResp.json();
+      console.log(orderJson);
       const order = orderJson.data;
 
       // e.g.
       const amountDecimal = order.total_inc_tax ?? order.total_ex_tax ?? order.order_amount;
-      const currency = order.currency_code.toLowerCase();
+      console.log(order)
+      console.log(amountDecimal)
+      const currency = order.currency.code.toLowerCase();
       const amount = Math.round(Number(amountDecimal) * 100);
           console.log(
       "[Custom Stripe] Creating PaymentIntent for order",
