@@ -1,10 +1,10 @@
-import express, { Request, Response } from 'express';
-import bodyParser from 'body-parser';
-import cors from 'cors';
-import Stripe from 'stripe';
+import express, { Request, Response } from "express";
+import bodyParser from "body-parser";
+import cors from "cors";
+import Stripe from "stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2025-11-17.clover',
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
+  apiVersion: "2025-11-17.clover",
 });
 
 const app = express();
@@ -12,28 +12,27 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok' });
+app.get("/health", (req: Request, res: Response) => {
+  res.json({ status: "ok" });
 });
 
-
-app.get('/payment/config', (req: Request, res: Response) => {
+app.get("/payment/config", (req: Request, res: Response) => {
   res.json({
-    name: 'Custom Stripe',
-    description: 'Pay securely via Stripe',
+    name: "Custom Stripe",
+    description: "Pay securely via Stripe",
     enabled: true,
   });
 });
 
-
-app.post('/payment/charge', (req: Request, res: Response) => {
-  console.log('Charge request payload:', req.body);
-  res.status(501).json({ ok: false, error: 'Not implemented yet' });
+app.post("/payment/charge", (req: Request, res: Response) => {
+  console.log("Charge request payload:", req.body);
+  res.status(501).json({ ok: false, error: "Not implemented yet" });
 });
-app.get('/checkout.js', (req: Request, res: Response) => {
-  const publicUrl = process.env.PUBLIC_URL || 'https://bc-stripe-gateway.onrender.com';
-  const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY || 'pk_test_REPLACE_ME';
+app.get("/checkout.js", (req: Request, res: Response) => {
+  const publicUrl =
+    process.env.PUBLIC_URL || "https://bc-stripe-gateway.onrender.com";
+  const publishableKey =
+    process.env.STRIPE_PUBLISHABLE_KEY || "pk_test_REPLACE_ME";
 
   const js = `
     console.log('[Custom Stripe] checkout.js loaded');
@@ -55,21 +54,48 @@ app.get('/checkout.js', (req: Request, res: Response) => {
         var paymentElement = null;
         var paymentClientSecret = null;
 
+        async function getCheckoutId() {
+          try {
+            const res = await fetch('/api/storefront/checkouts', {
+              credentials: 'include',
+            });
+
+            if (!res.ok) {
+              console.error('[Custom Stripe] /api/storefront/checkouts failed', res.status);
+              return null;
+            }
+
+            const checkouts = await res.json();
+            if (!Array.isArray(checkouts) || !checkouts.length) {
+              console.warn('[Custom Stripe] no checkouts found');
+              return null;
+            }
+
+            const checkout = checkouts[0];
+            console.log('[Custom Stripe] checkout id from storefront:', checkout.id);
+            return checkout.id;
+          } catch (e) {
+            console.error('[Custom Stripe] error getting checkout id', e);
+            return null;
+          }
+        }
+
         async function initPaymentElement() {
-          if (elements && paymentElement && paymentClientSecret) {
+           if (elements && paymentElement && paymentClientSecret) {
             return;
           }
 
-          // TODO: later replace with real BC total & currency
-          var amount = 1000; // £10.00 test
-          var currency = 'gbp';
+          const checkoutId = await getCheckoutId();
+          if (!checkoutId) {
+            throw new Error('Missing checkout ID; cannot create PaymentIntent');
+          }
 
-          console.log('[Custom Stripe] creating PaymentIntent for', amount, currency);
+          console.log('[Custom Stripe] creating PaymentIntent for checkout', checkoutId);
 
           const resp = await fetch('${publicUrl}/payment/create-intent', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ amount: amount, currency: currency }),
+            body: JSON.stringify({ checkoutId }),
           });
 
           const data = await resp.json();
@@ -264,25 +290,83 @@ app.get('/checkout.js', (req: Request, res: Response) => {
     });
   `;
 
-  res.type('application/javascript').send(js);
+  res.type("application/javascript").send(js);
 });
 
 const port = process.env.PORT || 3000;
-
 app.post('/payment/create-intent', async (req: Request, res: Response) => {
   try {
-    const { amount, currency } = req.body;
+    const { checkoutId } = req.body;
 
-    if (!amount || !currency) {
-      return res.status(400).json({ error: 'amount and currency are required' });
+    if (!checkoutId) {
+      return res.status(400).json({ error: 'checkoutId is required' });
     }
 
+    if (!process.env.BC_STORE_HASH || !process.env.BC_API_TOKEN) {
+      console.error('[Custom Stripe] Missing BC_STORE_HASH or BC_API_TOKEN');
+      return res
+        .status(500)
+        .json({ error: 'BigCommerce API is not configured on the server' });
+    }
+
+    // 1) Create an incomplete order from the checkout
+    const orderResp = await fetch(
+      `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts/${checkoutId}/orders`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Auth-Token': process.env.BC_API_TOKEN,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    if (!orderResp.ok) {
+      const text = await orderResp.text();
+      console.error('[Custom Stripe] create order failed', orderResp.status, text);
+      return res
+        .status(500)
+        .json({ error: 'Failed to create order from checkout in BigCommerce' });
+    }
+
+    const orderJson = await orderResp.json();
+    const order = orderJson.data;
+    console.log('[Custom Stripe] Created order from checkout:', order);
+    const currency = (order.currency.code || order.currency || 'GBP').toLowerCase();
+
+
+    const amountDecimal =
+        order.total_inc_tax ??
+        order.total_ex_tax 
+
+    if (amountDecimal == null) {
+      console.error('[Custom Stripe] No amount in order data:', order);
+      return res
+        .status(500)
+        .json({ error: 'Could not determine order total from BigCommerce' });
+    }
+
+    const amount = Math.round(Number(amountDecimal) * 100);
+
+    console.log(
+      '[Custom Stripe] Creating PaymentIntent for order',
+      order.id,
+      'amount =',
+      amount,
+      'currency =',
+      currency,
+    );
 
     const paymentIntent = await stripe.paymentIntents.create({
-      amount, 
+      amount,
       currency,
       automatic_payment_methods: { enabled: true },
-      setup_future_usage: 'off_session', 
+      setup_future_usage: 'off_session',
+      metadata: {
+        bc_order_id: String(order.id),
+        bc_checkout_id: String(checkoutId),
+      },
     });
 
     res.json({ clientSecret: paymentIntent.client_secret });
@@ -295,4 +379,3 @@ app.post('/payment/create-intent', async (req: Request, res: Response) => {
 app.listen(port, () => {
   console.log(`Custom payment app listening on port ${port}`);
 });
-
