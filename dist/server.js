@@ -295,8 +295,8 @@ app.post('/payment/create-intent', async (req, res) => {
         if (!checkoutId) {
             return res.status(400).json({ error: 'checkoutId is required' });
         }
-        if (!process.env.BC_STORE_HASH || !process.env.BC_API_TOKEN) {
-            console.error('[Custom Stripe] Missing BC_STORE_HASH or BC_API_TOKEN');
+        if (!process.env.BC_STORE_HASH || !process.env.BC_STOREFRONT_API_TOKEN) {
+            console.error('[Custom Stripe] Missing BC_STORE_HASH or BC_STOREFRONT_API_TOKEN');
             return res
                 .status(500)
                 .json({ error: 'BigCommerce API is not configured on the server' });
@@ -305,7 +305,7 @@ app.post('/payment/create-intent', async (req, res) => {
         const orderResp = await fetch(`https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts/${checkoutId}/orders`, {
             method: 'POST',
             headers: {
-                'X-Auth-Token': process.env.BC_API_TOKEN,
+                'X-Auth-Token': process.env.BC_STOREFRONT_API_TOKEN,
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
             },
