@@ -317,7 +317,7 @@ app.post("/payment/create-intent", async (req: Request, res: Response) => {
         .json({ error: "BigCommerce API is not configured on the server" });
     }
 
-    // 1) Create an incomplete order from the checkout api
+    // 1 Create an incomplete order from the checkout api
     const orderResp = await fetch(
       `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts/${checkoutId}/orders`,
       {
@@ -337,14 +337,50 @@ app.post("/payment/create-intent", async (req: Request, res: Response) => {
       }
 
       const orderJson = await orderResp.json();
-      console.log(orderJson);
       const order = orderJson.data;
+      if (!order || !order.id) {
+        console.error('[Custom Stripe] Invalid order response', orderJson);
+        throw new Error('Invalid order data received from BigCommerce');
+      }
 
-      // e.g.
-      const amountDecimal = order.total_inc_tax ?? order.total_ex_tax ?? order.order_amount;
-      console.log(order)
+        // 2 Fetch the incomplete order from the order api
+       const orderData = await fetch(
+      `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v2/orders/${order.id}`,
+      {
+        method: "GET",
+        headers: {
+          "X-Auth-Token": process.env.BC_API_TOKEN,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        }
+      }
+      );
+
+      if (!orderData.ok) {
+        const text = await orderData.text();
+        console.error('[Custom Stripe] fetch order details failed', orderData.status, text);
+        throw new Error('Failed to fetch order details from BigCommerce');
+      }
+
+      const orderDataJson = await orderData.json();
+      const unpackOrderData = orderDataJson;
+
+  
+      const amountDecimal = unpackOrderData.total_inc_tax ?? unpackOrderData.total_ex_tax ?? unpackOrderData.order_amount;
+      if (amountDecimal == null) {
+        console.error('[Custom Stripe] No amount field in order data', unpackOrderData);
+        throw new Error('Could not determine order total from BigCommerce');
+      }
+
+
+      if (!unpackOrderData.currency_code) {
+        console.error('[Custom Stripe] No currency_code in order data', unpackOrderData);
+        throw new Error('Could not determine order currency from BigCommerce');
+      }
+
+      console.log(unpackOrderData)
       console.log(amountDecimal)
-      const currency = order.currency.code.toLowerCase();
+      const currency = unpackOrderData.currency_code.toLowerCase();
       const amount = Math.round(Number(amountDecimal) * 100);
           console.log(
       "[Custom Stripe] Creating PaymentIntent for order",
