@@ -525,6 +525,9 @@ app.post("/payment/confirm", async (req: Request, res: Response) => {
       throw new Error("No checkoutId available to create checkout token");
     }
 
+    console.log("Sending this req")
+    console.log(`https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts/${effectiveCheckoutId}/token`)
+
     // 3) Create checkout token for order-confirmation redirect
     const tokenResp = await fetch(
       `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts/${effectiveCheckoutId}/token`,
@@ -549,7 +552,8 @@ app.post("/payment/confirm", async (req: Request, res: Response) => {
     }
 
     const tokenJson = await tokenResp.json();
-    const checkoutToken = tokenJson.data?.token;
+    console.log(tokenJson)
+    const checkoutToken = tokenJson.data?.checkoutToken;
     if (!checkoutToken) {
       throw new Error("BigCommerce did not return a checkout token");
     }
