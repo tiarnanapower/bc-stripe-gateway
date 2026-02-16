@@ -64,6 +64,9 @@ app.get("/checkout.js", (req, res) => {
         var paymentElement = null;
         var paymentClientSecret = null;
 
+        var bcOrderId = null;
+        var bcCheckoutId = null;
+
         async function getCheckoutId() {
           try {
             const res = await fetch('/api/storefront/cart', {
@@ -122,6 +125,9 @@ app.get("/checkout.js", (req, res) => {
           }
 
           paymentClientSecret = data.clientSecret;
+          bcOrderId = data.orderId;
+          bcCheckoutId = data.checkoutId || checkoutId;
+
 
           elements = stripe.elements({
             clientSecret: paymentClientSecret,
@@ -273,7 +279,7 @@ app.get("/checkout.js", (req, res) => {
                   return;
                 }
 
-                const { error } = await stripe.confirmPayment({
+                const { error, paymentIntent } = await stripe.confirmPayment({
                   elements: elements,
                   clientSecret: paymentClientSecret,
                   redirect: 'if_required',
@@ -287,9 +293,46 @@ app.get("/checkout.js", (req, res) => {
                   return;
                 }
 
-                console.log('[Custom Stripe] Payment success');
+                console.log('[Custom Stripe] Payment success', paymentIntent && paymentIntent.id);
+
+                // tell backend payment succeeded so it can update order + build redirect URL 
+                if (!bcOrderId || !bcCheckoutId) {
+                  console.error('[Custom Stripe] Missing BC order/checkout IDs');
+                  errorDiv.textContent = 'Payment succeeded, but order data is missing.';
+                  payButton.disabled = false;
+                  payButton.textContent = 'Pay with Custom Stripe';
+                  return;
+                }
+
+                const confirmResp = await fetch('${publicUrl}/payment/confirm', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    orderId: bcOrderId,
+                    checkoutId: bcCheckoutId,
+                    paymentIntentId: paymentIntent && paymentIntent.id,
+                  }),
+                });
+
+                const confirmData = await confirmResp.json();
+
+                if (!confirmResp.ok) {
+                  console.error('[Custom Stripe] confirm failed:', confirmData);
+                  errorDiv.textContent = confirmData.error || 'Order finalisation failed';
+                  payButton.disabled = false;
+                  payButton.textContent = 'Pay with Custom Stripe';
+                  return;
+                }
+
+                // Finally redirect to BC order confirmation
+                if (confirmData.redirectUrl) {
+                  window.location.href = confirmData.redirectUrl;
+                  return;
+                }
+
+                // fallback
                 errorDiv.style.color = 'green';
-                errorDiv.textContent = 'Payment succeeded (demo).';
+                errorDiv.textContent = 'Payment succeeded (but no redirect URL returned).';
                 payButton.disabled = false;
                 payButton.textContent = 'Pay with Custom Stripe';
               } catch (err) {
@@ -382,10 +425,101 @@ app.post("/payment/create-intent", async (req, res) => {
                 bc_checkout_id: String(checkoutId),
             },
         });
-        res.json({ clientSecret: paymentIntent.client_secret });
+        res.json({ clientSecret: paymentIntent.client_secret,
+            orderId: order.id,
+            checkoutId, });
     }
     catch (error) {
         console.error("[Custom Stripe] create-intent error:", error);
+        res.status(500).json({ error: error.message || "Something went wrong" });
+    }
+});
+app.post("/payment/confirm", async (req, res) => {
+    var _a;
+    try {
+        const { orderId, checkoutId, paymentIntentId } = req.body;
+        if (!orderId || !paymentIntentId) {
+            return res.status(400).json({ error: "orderId and paymentIntentId are required" });
+        }
+        if (!process.env.BC_STORE_HASH || !process.env.BC_API_TOKEN) {
+            console.error("[Custom Stripe] Missing BC_STORE_HASH or BC_API_TOKEN");
+            return res.status(500).json({
+                error: "BigCommerce API is not configured on the server",
+            });
+        }
+        // 1) Verify the PaymentIntent really succeeded
+        const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+        if (pi.status !== "succeeded") {
+            console.error("[Custom Stripe] PaymentIntent not succeeded:", pi.id, pi.status);
+            return res.status(400).json({ error: "Payment not completed" });
+        }
+        // 2) If we don't have checkoutId, recover it from the order (cart_id)
+        let effectiveCheckoutId = checkoutId;
+        if (!effectiveCheckoutId) {
+            const orderResp = await fetch(`https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v2/orders/${orderId}`, {
+                method: "GET",
+                headers: {
+                    "X-Auth-Token": process.env.BC_API_TOKEN,
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                },
+            });
+            if (!orderResp.ok) {
+                const text = await orderResp.text();
+                console.error("[Custom Stripe] fetch order for checkoutId failed", orderResp.status, text);
+                throw new Error("Failed to fetch order to determine checkoutId");
+            }
+            const bcOrder = await orderResp.json();
+            effectiveCheckoutId = bcOrder.cart_id;
+        }
+        if (!effectiveCheckoutId) {
+            throw new Error("No checkoutId available to create checkout token");
+        }
+        // 3) Create checkout token for order-confirmation redirect
+        const tokenResp = await fetch(`https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/checkouts/${effectiveCheckoutId}/token`, {
+            method: "POST",
+            headers: {
+                "X-Auth-Token": process.env.BC_API_TOKEN,
+                Accept: "application/json",
+                "Content-Type": "application/json",
+            },
+        });
+        if (!tokenResp.ok) {
+            const text = await tokenResp.text();
+            console.error("[Custom Stripe] create checkout token failed", tokenResp.status, text);
+            throw new Error("Failed to create checkout token in BigCommerce");
+        }
+        const tokenJson = await tokenResp.json();
+        const checkoutToken = (_a = tokenJson.data) === null || _a === void 0 ? void 0 : _a.token;
+        if (!checkoutToken) {
+            throw new Error("BigCommerce did not return a checkout token");
+        }
+        // 4) Update the order status to indicate payment collected
+        //   2 = Awaiting Fulfillment 
+        const updateResp = await fetch(`https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v2/orders/${orderId}`, {
+            method: "PUT",
+            headers: {
+                "X-Auth-Token": process.env.BC_API_TOKEN,
+                Accept: "application/json",
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                status_id: 2,
+            }),
+        });
+        if (!updateResp.ok) {
+            const text = await updateResp.text();
+            console.error("[Custom Stripe] update order status failed", updateResp.status, text);
+            throw new Error("Failed to update order status in BigCommerce");
+        }
+        // 5) Build redirect URL for order confirmation
+        const storeUrl = process.env.BC_STORE_URL ||
+            "https://france-1742885.mybigcommerce.com";
+        const redirectUrl = `${storeUrl}/checkout/order-confirmation/${orderId}?t=${encodeURIComponent(checkoutToken)}`;
+        res.json({ redirectUrl });
+    }
+    catch (error) {
+        console.error("[Custom Stripe] payment confirm error:", error);
         res.status(500).json({ error: error.message || "Something went wrong" });
     }
 });
